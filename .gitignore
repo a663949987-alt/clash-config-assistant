@@ -1,0 +1,9 @@
+*.exe
+*.bin
+*.tmp
+*.result
+state.json
+backups/
+staging/
+operation-*
+release-*.txt

@@ -19,10 +19,10 @@ using YamlDotNet.RepresentationModel;
 
 namespace ClashConfig {
  public sealed class Choice {public string Name;public string[] Paths;public override string ToString(){return Name;}}
- public sealed class Input {public string Kind,Address,Username,Password;public bool AutoStart;public string[] Paths;}
- public sealed class SavedState {public string Backup;public string[] Paths;public string Scope;public string ConfigRoot;public bool HasGuard;}
+ public sealed class Input {public string Kind,Address,Username,Password;public bool AutoStart;public int RuleMode;public string NodeName;public string[] Paths;}
+ public sealed class SavedState {public string Backup;public string[] Paths;public string Scope;public string ConfigRoot;public bool HasGuard;public int RuleMode;public string TestIP,NodeName;}
  public sealed class BackupInfo {public string[] Present;public bool AutoRunExists,ProxyExists,ApprovedExists;public string AutoRun,OldState;public int Proxy;public byte[] Approved;}
- public sealed class Prepared {public string Yaml;public string[] Paths;public string TestIP;}
+ public sealed class Prepared {public string Yaml;public string[] Paths;public string TestIP;public int RuleMode;public string NodeName;}
  public sealed class Operation {public string Action;public Prepared Prepared;public bool AutoStart;}
  public static class Core {
   public static string Data=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"ClashConfigAssistant");
@@ -56,14 +56,14 @@ namespace ClashConfig {
     result.Add("PROCESS-PATH,"+p+","+Group);result.Add("PROCESS-PATH,"+p+",REJECT");
    }foreach(string name in paths.Select(Path.GetFileName).Distinct(StringComparer.OrdinalIgnoreCase))result.Add("PROCESS-NAME,"+name+",REJECT");result.Add("PROCESS-NAME-REGEX,^.+$,DIRECT");result.Add("MATCH,REJECT");return result;
   }
-  public static string Build(string raw,string[] paths){
+  public static string Build(string raw,string[] paths,int ruleMode=0){
    var source=Parse(raw);var proxies=Get(source,"proxies") as YamlSequenceNode;
    if(proxies==null||proxies.Children.Count==0)throw new InvalidOperationException("此链接没有直接节点。请使用包含 proxies 的 Clash 订阅，暂不支持 provider-only 或 Base64 分享链接。");
    var names=new HashSet<string>(StringComparer.Ordinal);var list=new YamlSequenceNode();
    foreach(var p in proxies.Children){var m=p as YamlMappingNode;if(m==null)throw new InvalidOperationException("节点格式不正确。");string name=Str(Get(m,"name")),type=Str(Get(m,"type"));if(String.IsNullOrEmpty(name)||!names.Add(name)||new[]{"DIRECT","REJECT",Group}.Contains(name)||String.IsNullOrEmpty(type)||new[]{"direct","reject","dns"}.Contains(type.ToLowerInvariant()))throw new InvalidOperationException("订阅含空节点、重复名称或直连节点，严格模式不接受该配置。");list.Add(S(name));}
    var output=new YamlMappingNode();Set(output,"proxies",proxies);
    var group=new YamlMappingNode();Set(group,"name",S(Group));Set(group,"type",S("select"));Set(group,"proxies",list);Set(group,"udp",S("true"));Set(output,"proxy-groups",new YamlSequenceNode(group));
-   Set(output,"rules",new YamlSequenceNode(Rules(paths).Select(S)));Set(output,"find-process-mode",S("always"));Set(output,"mode",S("rule"));Set(output,"allow-lan",S("false"));Set(output,"ipv6",S("true"));return Dump(output);
+   Set(output,"rules",new YamlSequenceNode((ruleMode==2?Mode2.Rules(paths):Rules(paths)).Select(S)));Set(output,"find-process-mode",S("always"));Set(output,"mode",S("rule"));Set(output,"allow-lan",S("false"));Set(output,"ipv6",S("true"));if(ruleMode==2)Set(output,"sniffer",Get(Parse("sniffer: "+Mode2.SnifferJson),"sniffer"));return Dump(output);
   }
   public static string Direct(Input i){
    string scheme=i.Kind=="SOCKS5"?"socks5":"http";string address=i.Address.Trim();Uri uri;if(!Uri.TryCreate(address.Contains("://")?address:scheme+"://"+address,UriKind.Absolute,out uri)||uri.Host.Length==0||uri.Port<1||uri.Port>65535||uri.Query.Length>0||uri.Fragment.Length>0||(uri.AbsolutePath!=""&&uri.AbsolutePath!="/")||uri.Scheme!=scheme)throw new InvalidOperationException("请填写正确的主机:端口，或匹配类型的完整代理 URL。IPv6 地址需放在方括号内。");
@@ -81,18 +81,18 @@ namespace ClashConfig {
   static string Quote(string s){return "\""+s.Replace("\"", "")+"\"";}
   static Process LaunchCore(string file,string root,bool validate){var info=new ProcessStartInfo(CoreExe,(validate?"-t ":"")+"-d "+Quote(root)+" -f "+Quote(file)){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};var p=Process.Start(info);p.OutputDataReceived+=(s,e)=>{};p.ErrorDataReceived+=(s,e)=>{};p.BeginOutputReadLine();p.BeginErrorReadLine();return p;}
   public static Prepared Prepare(Input input,Action<string> log){
-   RequireClash();Rules(input.Paths);foreach(string p in input.Paths)if(!File.Exists(p))throw new InvalidOperationException("某个所选 EXE 已不存在，请重新选择。");
-   log("正在检查代理内容……");string raw=input.Kind=="Clash 订阅"?Download(input.Address):Direct(input);string yaml=Build(raw,input.Paths);
+   RequireClash();if(input.RuleMode==2){Rules(input.Paths);input.Paths=Mode2.Expand(input.Paths);}Rules(input.Paths);foreach(string p in input.Paths)if(!File.Exists(p))throw new InvalidOperationException("某个所选 EXE 已不存在，请重新选择。");
+   log("正在检查代理内容……");string raw=input.Kind=="Clash 订阅"?Download(input.Address):Direct(input);if(input.RuleMode==2&&input.Kind=="Clash 订阅")raw=Mode2.SelectNode(raw,input.NodeName);string yaml=Build(raw,input.Paths,input.RuleMode);
    string stage=Path.Combine(Data,"staging",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(stage);Process core=null;
    try{
-    var test=Parse(yaml);int port=FreePort();Set(test,"mixed-port",S(port.ToString()));Set(test,"rules",new YamlSequenceNode(S("MATCH,"+Group)));Set(test,"tun",new YamlMappingNode(S("enable"),S("false")));Set(test,"external-controller",S(""));Set(test,"log-level",S("silent"));string file=Path.Combine(stage,"test.yaml");Write(file,Dump(test));
+    var test=Parse(yaml);int port=FreePort();Set(test,"mixed-port",S(port.ToString()));Set(test,"tun",new YamlMappingNode(S("enable"),S("false")));Set(test,"external-controller",S(""));Set(test,"log-level",S("silent"));string file=Path.Combine(stage,"test.yaml");Write(file,Dump(test));
     using(var check=LaunchCore(file,stage,true)){if(!check.WaitForExit(20000)){check.Kill();throw new InvalidOperationException("内核校验超时，未修改现有配置。");}if(check.ExitCode!=0)throw new InvalidOperationException("节点未通过 Mihomo 校验。请检查协议、端口、账号密码或订阅兼容性。");}
-    log("配置格式有效，正在测试代理出口……");core=LaunchCore(file,stage,false);string found=null;
+    Set(test,"rules",new YamlSequenceNode(S("MATCH,"+Group)));Write(file,Dump(test));log("配置格式有效，正在测试代理出口……");core=LaunchCore(file,stage,false);string found=null;
     for(int retry=0;retry<30;retry++){if(core.HasExited)throw new InvalidOperationException("测试内核未能启动。");try{using(var socket=new TcpClient()){socket.Connect(IPAddress.Loopback,port);}break;}catch{Thread.Sleep(100);}}
     var failures=new List<string>();foreach(string endpoint in new[]{"https://api.ipify.org","http://myip.ipip.net"}){
      try{var r=(HttpWebRequest)WebRequest.Create(endpoint);r.Proxy=new WebProxy("127.0.0.1",port);r.Timeout=12000;r.ReadWriteTimeout=12000;using(var response=r.GetResponse())using(var reader=new StreamReader(response.GetResponseStream())){string body=reader.ReadToEnd();var match=Regex.Match(body,@"\b(?:\d{1,3}\.){3}\d{1,3}\b");IPAddress ip;if(match.Success&&IPAddress.TryParse(match.Value,out ip)){found=ip.ToString();break;}if(IPAddress.TryParse(body.Trim(),out ip)){found=ip.ToString();break;}failures.Add("InvalidResponse");}}catch(WebException e){failures.Add(e.Status.ToString()+(e.Response is HttpWebResponse?"/"+(int)((HttpWebResponse)e.Response).StatusCode:""));}catch(Exception e){failures.Add(e.GetType().Name);}
     }
-    if(found==null)throw new InvalidOperationException("节点未通过出口连通测试（"+String.Join(", ",failures)+"）。不会应用或回退直连。");log("代理出口测试成功："+found);return new Prepared{Yaml=yaml,Paths=input.Paths,TestIP=found};
+    if(found==null)throw new InvalidOperationException("节点未通过出口连通测试（"+String.Join(", ",failures)+"）。不会应用或回退直连。");log("代理出口测试成功："+found);return new Prepared{Yaml=yaml,Paths=input.Paths,TestIP=found,RuleMode=input.RuleMode,NodeName=input.RuleMode==2?Str(Get((YamlMappingNode)((YamlSequenceNode)Get(Parse(yaml),"proxies")).Children[0],"name")):null};
    }finally{if(core!=null){try{if(!core.HasExited){core.Kill();core.WaitForExit(5000);}}finally{core.Dispose();}}try{Directory.Delete(stage,true);}catch{}}
   }
   public static object Api(string route){
@@ -131,7 +131,7 @@ namespace ClashConfig {
    try{
     CloseClash();b=Snapshot(backup);
     Write(Path.Combine(ConfigRoot,"profiles",ProfileId+".yaml"),prepared.Yaml);
-    string script="function main(config) { config.mode='rule'; config['find-process-mode']='always'; config['allow-lan']=false; config.rules="+Json.Serialize(Rules(prepared.Paths))+"; return config; }";
+    string script="function main(config) { config.mode='rule'; config['find-process-mode']='always'; config['allow-lan']=false; config.rules="+Json.Serialize(prepared.RuleMode==2?Mode2.Rules(prepared.Paths):Rules(prepared.Paths))+"; "+(prepared.RuleMode==2?"config.sniffer="+Mode2.SnifferJson+";":"")+" return config; }";
     Write(Path.Combine(ConfigRoot,"profiles",ScriptId+".js"),script);
     var profiles=Parse(File.ReadAllText(Path.Combine(ConfigRoot,"profiles.yaml")));var items=Get(profiles,"items") as YamlSequenceNode;if(items==null)throw new InvalidOperationException("现有 Clash 订阅列表结构不支持，已取消。");
     foreach(var n in items.Children.ToArray()){var m=n as YamlMappingNode;if(m!=null&&new[]{ProfileId,ScriptId}.Contains(Str(Get(m,"uid"))))items.Children.Remove(n);}
@@ -142,28 +142,28 @@ namespace ClashConfig {
     using(var run=Registry.CurrentUser.CreateSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Run")){if(auto)run.SetValue("Clash Verge",Quote(ClashExe));else run.DeleteValue("Clash Verge",false);}
     if(auto)using(var k=Registry.CurrentUser.CreateSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run")){byte[] approved=new byte[12];approved[0]=2;k.SetValue("Clash Verge",approved,RegistryValueKind.Binary);}
     using(var k=Registry.CurrentUser.CreateSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")){k.SetValue("ProxyEnable",0,RegistryValueKind.DWord);}InternetSetOption(IntPtr.Zero,39,IntPtr.Zero,0);InternetSetOption(IntPtr.Zero,37,IntPtr.Zero,0);
-    OpenClash();WaitRuntime(prepared.Paths);ulong luid=Tunnel();if(luid==0)throw new InvalidOperationException("未检测到 Mihomo 虚拟网卡，不能启用严格保护。");
-    Write(Path.Combine(Data,"state.json"),Json.Serialize(new SavedState{Backup=backup,Paths=prepared.Paths,Scope=Guard.Scope().ToString(),ConfigRoot=ConfigRoot,HasGuard=true}));
+    OpenClash();WaitRuntime(prepared.Paths,prepared.RuleMode);ulong luid=Tunnel();if(luid==0)throw new InvalidOperationException("未检测到 Mihomo 虚拟网卡，不能启用严格保护。");
+    Write(Path.Combine(Data,"state.json"),Json.Serialize(new SavedState{Backup=backup,Paths=prepared.Paths,Scope=Guard.Scope().ToString(),ConfigRoot=ConfigRoot,HasGuard=true,RuleMode=prepared.RuleMode,TestIP=prepared.TestIP,NodeName=prepared.NodeName}));
     log("规则已就绪，正在启用系统断网保护……");RunGuard(new GuardRequest{Scope=Guard.Scope().ToString(),Paths=prepared.Paths,Tunnel=luid});committed=true;
     log("配置与系统保护已启用。请启动所选软件，再点击“验证当前连接”。");
-   }catch{if(!committed){if(b!=null){CloseClash();RestoreFiles(backup,b);if(b.OldState!=null)Write(statePath,b.OldState);else if(File.Exists(statePath))File.Delete(statePath);}OpenClash();if(previous!=null&&previous.HasGuard){WaitRuntime(previous.Paths);Guard.Apply(new GuardRequest{Scope=previous.Scope,Paths=previous.Paths,Tunnel=Tunnel()});}else Guard.Apply(new GuardRequest{Scope=Guard.Scope().ToString(),Remove=true});}throw;}
+   }catch{if(!committed){if(b!=null){CloseClash();RestoreFiles(backup,b);if(b.OldState!=null)Write(statePath,b.OldState);else if(File.Exists(statePath))File.Delete(statePath);}OpenClash();if(previous!=null&&previous.HasGuard){WaitRuntime(previous.Paths,previous.RuleMode);Guard.Apply(new GuardRequest{Scope=previous.Scope,Paths=previous.Paths,Tunnel=Tunnel()});}else Guard.Apply(new GuardRequest{Scope=Guard.Scope().ToString(),Remove=true});}throw;}
   }
   public static string Elevate(Operation operation){
    Directory.CreateDirectory(Data);string file=Path.Combine(Data,"operation-"+Guid.NewGuid().ToString("N")+".bin");byte[] payload=Encoding.UTF8.GetBytes(Json.Serialize(operation));File.WriteAllBytes(file,ProtectedData.Protect(payload,null,DataProtectionScope.CurrentUser));
    try{try{using(var p=Process.Start(new ProcessStartInfo(Exe,"--operation "+Quote(file)){UseShellExecute=true,Verb="runas"})){if(!p.WaitForExit(180000))throw new InvalidOperationException("操作尚未结束，请稍后检查状态。不要重复应用。");if(p.ExitCode!=0)throw new InvalidOperationException(File.Exists(file+".result")?File.ReadAllText(file+".result"):"操作未完成。");return File.ReadAllText(file+".result");}}catch(System.ComponentModel.Win32Exception){throw new InvalidOperationException("管理员授权被取消，操作未完成。");}}finally{try{File.Delete(file);File.Delete(file+".result");}catch{}}
   }
   public static void RemoveProtection(){if(!Guard.IsAdmin){Elevate(new Operation{Action="removeguard"});return;}Guard.Apply(new GuardRequest{Scope=Guard.Scope().ToString(),Remove=true});}
-  public static void WaitRuntime(string[] paths){Exception last=null;for(int i=0;i<15;i++){try{var c=(Dictionary<string,object>)Api("/configs");if((string)c["mode"]!="rule"||!(bool)((Dictionary<string,object>)c["tun"])["enable"])throw new Exception();var rules=(Dictionary<string,object>)Api("/rules");var a=(object[])rules["rules"];foreach(string p in paths){if(!a.Cast<Dictionary<string,object>>().Any(r=>(string)r["payload"]==p&&(string)r["proxy"]==Group)||!a.Cast<Dictionary<string,object>>().Any(r=>(string)r["payload"]==p&&(string)r["proxy"]=="REJECT"))throw new Exception();}return;}catch(Exception e){last=e;Thread.Sleep(700);}}throw new InvalidOperationException("Clash 未确认 TUN 与完整规则生效，已停止应用操作。",last);}
+  public static void WaitRuntime(string[] paths,int ruleMode=0){Exception last=null;for(int i=0;i<15;i++){try{var c=(Dictionary<string,object>)Api("/configs");if((string)c["mode"]!="rule"||!(bool)((Dictionary<string,object>)c["tun"])["enable"])throw new Exception();var rules=(Dictionary<string,object>)Api("/rules");var a=(object[])rules["rules"];foreach(string p in paths){if(!a.Cast<Dictionary<string,object>>().Any(r=>(string)r["payload"]==p&&(string)r["proxy"]==Group)||!a.Cast<Dictionary<string,object>>().Any(r=>(string)r["payload"]==p&&(string)r["proxy"]=="REJECT"))throw new Exception();}if(ruleMode==2){foreach(string expected in Mode2.Rules(paths).Where(r=>r.StartsWith("PROCESS-"))){var parts=expected.Split(',');if(!a.Cast<Dictionary<string,object>>().Any(r=>(string)r["payload"]==parts[1]&&(string)r["proxy"]==parts[2]))throw new Exception();}if((string)((Dictionary<string,object>)a[a.Length-1])["proxy"]!="DIRECT")throw new Exception();var active=Parse(File.ReadAllText(Path.Combine(ConfigRoot,"clash-verge.yaml")));var sniff=Get(active,"sniffer") as YamlMappingNode;if(sniff==null||Str(Get(sniff,"enable"))!="true")throw new Exception();}return;}catch(Exception e){last=e;Thread.Sleep(700);}}throw new InvalidOperationException("Clash 未确认 TUN 与完整规则生效，已停止应用操作。",last);}
   public static string Verify(){
    if(!Guard.IsAdmin)return Elevate(new Operation{Action="verify"});
-   string file=Path.Combine(Data,"state.json");if(!File.Exists(file))return "还没有通过本工具应用配置。";var state=Json.Deserialize<SavedState>(File.ReadAllText(file));WaitRuntime(state.Paths);int count=Guard.Count(new Guid(state.Scope));if(count==0)return "系统断网保护不存在，不能确认严格保护。请重新应用。";
+   string file=Path.Combine(Data,"state.json");if(!File.Exists(file))return "还没有通过本工具应用配置。";var state=Json.Deserialize<SavedState>(File.ReadAllText(file));WaitRuntime(state.Paths,state.RuleMode);int count=Guard.Count(new Guid(state.Scope));if(count==0)return "系统断网保护不存在，不能确认严格保护。请重新应用。";
    if(!Guard.AllowsTunnel(new Guid(state.Scope),Tunnel()))return "虚拟网卡标识已变化，当前保护会阻断所选应用。请重新应用配置以恢复代理通道。";
-   var data=(Dictionary<string,object>)Api("/connections");var list=(object[])data["connections"];int proxy=0,direct=0;foreach(Dictionary<string,object> c in list){var m=(Dictionary<string,object>)c["metadata"];object value;if(!m.TryGetValue("processPath",out value)||!state.Paths.Contains(Convert.ToString(value),StringComparer.OrdinalIgnoreCase))continue;var chains=(object[])c["chains"];if(chains.Any(x=>Convert.ToString(x)==Group))proxy++;else if(chains.Any(x=>Convert.ToString(x)=="DIRECT")){IPAddress address;string ip=Convert.ToString(m["destinationIP"]);if(IPAddress.TryParse(ip,out address)&&IsLocal(address))continue;direct++;}}
-   return "TUN 与进程规则已核对；系统保护规则 "+count+" 条。\r\n当前所选进程：代理连接 "+proxy+"，公网直连 "+direct+"。\r\n"+(direct>0?"发现异常直连，停止使用并重新应用。":proxy==0?"尚未捕获所选软件流量。请启动软件并联网后再验证。":"已捕获实际代理连接。此结果仅覆盖当前可识别进程与连接。");
+   var data=(Dictionary<string,object>)Api("/connections");var list=(object[])data["connections"];int proxy=0,direct=0;foreach(Dictionary<string,object> c in list){var m=(Dictionary<string,object>)c["metadata"];object value;if(!m.TryGetValue("processPath",out value)||!(state.RuleMode==2?Mode2.Matches(Convert.ToString(value),state.Paths):state.Paths.Contains(Convert.ToString(value),StringComparer.OrdinalIgnoreCase)))continue;var chains=(object[])c["chains"];if(chains.Any(x=>Convert.ToString(x)==Group))proxy++;else if(chains.Any(x=>Convert.ToString(x)=="DIRECT")){IPAddress address;string ip=Convert.ToString(m["destinationIP"]);if(IPAddress.TryParse(ip,out address)&&IsLocal(address))continue;direct++;}}
+   return "验证时间："+DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")+"\r\n策略："+(state.RuleMode==2?Mode2.Name:"规则方式1 · 严格路径")+"；应用前出口："+state.TestIP+(state.RuleMode==2?" / "+state.NodeName:"")+"\r\nTUN 与进程规则已核对；系统保护规则 "+count+" 条。\r\n当前所选进程：代理连接 "+proxy+"，公网直连 "+direct+"。\r\n"+(direct>0?"发现异常直连，停止使用并重新应用。":proxy==0?"尚未捕获所选软件流量。请启动软件并联网后再验证。":"已捕获实际代理连接。此结果仅覆盖当前可识别进程与连接。");
   }
   static bool IsLocal(IPAddress ip){var b=ip.GetAddressBytes();return IPAddress.IsLoopback(ip)||(b.Length==4&&(b[0]==10||b[0]==192&&b[1]==168||b[0]==172&&b[1]>=16&&b[1]<=31||b[0]==169&&b[1]==254))||(b.Length==16&&((b[0]&0xfe)==0xfc||b[0]==0xfe&&(b[1]&0xc0)==0x80));}
   public static void Restore(Action<string> log){if(!Guard.IsAdmin){Elevate(new Operation{Action="restore"});log("已恢复上一次配置及相应保护状态。");return;}RequireClash();string file=Path.Combine(Data,"state.json");if(!File.Exists(file)){Guard.Apply(new GuardRequest{Scope=Guard.Scope().ToString(),Remove=true});log("没有配置备份，已解除本工具残留的系统断网保护。");return;}var state=Json.Deserialize<SavedState>(File.ReadAllText(file));if(!Path.GetFullPath(state.Backup).StartsWith(Path.GetFullPath(Path.Combine(Data,"backups"))+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException("备份路径无效。");var b=Json.Deserialize<BackupInfo>(File.ReadAllText(Path.Combine(state.Backup,"snapshot.json")));Guard.Apply(new GuardRequest{Scope=state.Scope,Paths=state.Paths,Tunnel=1});CloseClash();RestoreFiles(state.Backup,b);OpenClash();
-   var old=b.OldState==null?null:Json.Deserialize<SavedState>(b.OldState);if(old!=null&&old.HasGuard){WaitRuntime(old.Paths);RunGuard(new GuardRequest{Scope=old.Scope,Paths=old.Paths,Tunnel=Tunnel()});Write(file,b.OldState);}else{RunGuard(new GuardRequest{Scope=state.Scope,Remove=true});File.Delete(file);}log("已恢复上一次配置；相应的系统保护也已恢复或解除。");
+   var old=b.OldState==null?null:Json.Deserialize<SavedState>(b.OldState);if(old!=null&&old.HasGuard){WaitRuntime(old.Paths,old.RuleMode);RunGuard(new GuardRequest{Scope=old.Scope,Paths=old.Paths,Tunnel=Tunnel()});Write(file,b.OldState);}else{RunGuard(new GuardRequest{Scope=state.Scope,Remove=true});File.Delete(file);}log("已恢复上一次配置；相应的系统保护也已恢复或解除。");
   }
   [DllImport("iphlpapi.dll")]static extern uint ConvertInterfaceIndexToLuid(uint index,out ulong luid);
   [DllImport("wininet.dll",SetLastError=true)]static extern bool InternetSetOption(IntPtr h,int option,IntPtr b,int len);

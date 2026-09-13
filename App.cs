@@ -12,11 +12,12 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 [assembly:AssemblyTitle("Clash 应用代理配置助手")]
-[assembly:AssemblyVersion("1.1.2.0")]
+[assembly:AssemblyVersion("1.2.0.0")]
 namespace ClashConfig {
  public sealed class MainForm:Form {
-  ComboBox kind;TextBox address,user,password;CheckBox show,auto;ListView apps;Label count,status,client;Button apply,verify,restore,test;FlowLayoutPanel commandBar;bool busy;
+  ComboBox kind,ruleMode;TextBox address,user,password,nodeName;CheckBox show,auto;ListView apps;Label count,status,client;Button apply,verify,restore,test;FlowLayoutPanel commandBar;bool busy;
   public MainForm(){
+   using(var iconStream=Assembly.GetExecutingAssembly().GetManifestResourceStream("app.ico"))if(iconStream!=null)using(var embedded=new Icon(iconStream))Icon=(Icon)embedded.Clone();
    Text="Clash 应用代理配置助手";Font=new Font("Microsoft YaHei UI",10);AutoScaleDimensions=new SizeF(96,96);AutoScaleMode=AutoScaleMode.Dpi;ClientSize=new Size(800,780);MinimumSize=new Size(760,600);StartPosition=FormStartPosition.CenterScreen;BackColor=Color.FromArgb(244,247,251);
    var root=new TableLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(18,12,18,12),ColumnCount=1,RowCount=7};root.RowStyles.Add(new RowStyle(SizeType.Absolute,44));root.RowStyles.Add(new RowStyle(SizeType.Absolute,36));root.RowStyles.Add(new RowStyle(SizeType.Absolute,162));root.RowStyles.Add(new RowStyle(SizeType.Percent,100));root.RowStyles.Add(new RowStyle(SizeType.Absolute,76));root.RowStyles.Add(new RowStyle(SizeType.Absolute,50));root.RowStyles.Add(new RowStyle(SizeType.Absolute,70));Controls.Add(root);
    var title=new Label{Text="选择应用，专用代理",Font=new Font(Font.FontFamily,21,FontStyle.Bold),AutoSize=true,Dock=DockStyle.Fill,ForeColor=Color.FromArgb(25,43,67)};root.Controls.Add(title,0,0);
@@ -42,8 +43,11 @@ namespace ClashConfig {
    var saveMemory=new Button{Text="记住当前填写",Width=145,Height=32};var useApps=new Button{Text="恢复上次应用选择",Width=175,Height=32};var clearMemory=new Button{Text="清除记忆",Width=110,Height=32};memoryBar.Controls.AddRange(new Control[]{saveMemory,useApps,clearMemory});fields.Controls.Add(memoryBar,0,3);fields.SetColumnSpan(memoryBar,4);
    saveMemory.Click+=delegate{try{SaveMemory();Log("已加密记住代理、开机选项和应用选择。下次打开不会自动应用网络设置。");}catch{Log("本机记忆保存失败，原记忆未主动清除。");}};
    useApps.Click+=delegate{try{var saved=LocalMemory.Load();if(saved==null){Log("尚无本机记忆。");return;}foreach(ListViewItem item in apps.Items)item.Checked=false;foreach(string p in saved.Paths??new string[0])AddChoice(new Choice{Name=Path.GetFileNameWithoutExtension(p),Paths=new[]{p}});foreach(ListViewItem item in apps.Items)item.Checked=((Choice)item.Tag).Paths.All(p=>(saved.Paths??new string[0]).Contains(p,StringComparer.OrdinalIgnoreCase));Log("已恢复仍存在的应用路径。软件更新后，请补充新增的联网组件，再点击应用。");}catch{Log("无法读取本机记忆，请重新填写或清除记忆。");}};
-   clearMemory.Click+=delegate{try{LocalMemory.Clear();address.Clear();user.Clear();password.Clear();foreach(ListViewItem item in apps.Items)item.Checked=false;Log("已清除本机表单记忆。已生效的 Clash 配置与保护规则不受影响。");}catch{Log("清除记忆失败，请检查文件权限。");}};
+   clearMemory.Click+=delegate{try{LocalMemory.Clear();address.Clear();user.Clear();password.Clear();nodeName.Clear();ruleMode.SelectedIndex=0;foreach(ListViewItem item in apps.Items)item.Checked=false;Log("已清除本机表单记忆。已生效的 Clash 配置与保护规则不受影响。");}catch{Log("清除记忆失败，请检查文件权限。");}};
    try{var saved=LocalMemory.Load();if(saved!=null){if(kind.Items.Contains(saved.Kind))kind.SelectedItem=saved.Kind;address.Text=saved.Address??"";user.Text=saved.Username??"";password.Text=saved.Password??"";auto.Checked=saved.AutoStart;status.Text="已读取本机加密记忆。应用仍未勾选；可手动选择或恢复上次选择。";}}catch{status.Text="本机记忆无法解密，未加载。可重新填写或清除记忆。";}
+   fields.RowCount=6;ruleMode=new ComboBox{DropDownStyle=ComboBoxStyle.DropDownList,Dock=DockStyle.Fill};ruleMode.Items.AddRange(new object[]{"规则方式1 · 严格路径",Mode2.Name});ruleMode.SelectedIndex=0;fields.Controls.Add(Label("规则方式"),0,4);fields.Controls.Add(ruleMode,1,4);fields.SetColumnSpan(ruleMode,3);
+   nodeName=new TextBox{Dock=DockStyle.Fill,AccessibleName="固定节点完整名称（可选）"};fields.Controls.Add(Label("固定节点"),0,5);fields.Controls.Add(nodeName,1,5);fields.SetColumnSpan(nodeName,3);nodeName.Enabled=false;ruleMode.SelectedIndexChanged+=delegate{nodeName.Enabled=ruleMode.SelectedIndex==1;Log(ruleMode.SelectedIndex==1?"方式2：按进程名兼容分流，抖音含目录匹配；启用流量识别，其余直连。应用仍由你勾选。固定节点名可留空。":"方式1：按完整 EXE 路径匹配，未知进程拒绝。");};
+   try{var remembered=LocalMemory.Load();if(remembered!=null){ruleMode.SelectedIndex=remembered.RuleMode==2?1:0;nodeName.Text=remembered.NodeName??"";}}catch{}
    // Content determines row height; a small viewport scrolls instead of clipping text.
    AutoScroll=true;root.Dock=DockStyle.Top;root.AutoSize=true;root.AutoSizeMode=AutoSizeMode.GrowAndShrink;root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
    root.RowStyles.Clear();for(int i=0;i<root.RowCount;i++)root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -56,12 +60,12 @@ namespace ClashConfig {
    Shown+=delegate{root.PerformLayout();};
   }
   static void FitButtons(Control parent){foreach(Control c in parent.Controls){var button=c as Button;if(button!=null){button.AutoSize=true;button.AutoSizeMode=AutoSizeMode.GrowOnly;button.MinimumSize=new Size(0,button.GetPreferredSize(Size.Empty).Height+4);}FitButtons(c);}}
-  void SaveMemory(){LocalMemory.Save(new Input{Kind=kind.Text,Address=address.Text.Trim(),Username=user.Text,Password=password.Text,AutoStart=auto.Checked,Paths=apps.CheckedItems.Cast<ListViewItem>().SelectMany(x=>((Choice)x.Tag).Paths).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()});}
+  void SaveMemory(){LocalMemory.Save(new Input{Kind=kind.Text,Address=address.Text.Trim(),Username=user.Text,Password=password.Text,AutoStart=auto.Checked,RuleMode=ruleMode.SelectedIndex==1?2:0,NodeName=nodeName.Text.Trim(),Paths=apps.CheckedItems.Cast<ListViewItem>().SelectMany(x=>((Choice)x.Tag).Paths).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()});}
   Label Label(string t){return new Label{Text=t,Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleLeft,AutoSize=true};}
   Button Button(string t,int w,bool primary){return new Button{Text=t,Width=w,Height=42,FlatStyle=FlatStyle.Flat,BackColor=primary?Color.FromArgb(35,101,211):Color.White,ForeColor=primary?Color.White:Color.FromArgb(40,55,75)};}
   void Log(string s){if(IsDisposed)return;if(InvokeRequired){BeginInvoke(new Action<string>(Log),s);return;}status.Text=s;}
   async Task Execute(Func<Task> task){if(busy)return;busy=true;commandBar.Enabled=false;try{await task();}catch(Exception e){Log(e is InvalidOperationException?e.Message:"操作未完成（"+e.GetType().Name+"）。请检查客户端状态后重试。");}finally{busy=false;commandBar.Enabled=true;}}
-  Input ReadInput(){var paths=apps.CheckedItems.Cast<ListViewItem>().SelectMany(x=>((Choice)x.Tag).Paths).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();if(paths.Length==0)throw new InvalidOperationException("请至少选择一个应用，每次需由你自己勾选。");if(String.IsNullOrWhiteSpace(address.Text))throw new InvalidOperationException("请填写代理地址或订阅链接。");return new Input{Kind=kind.Text,Address=address.Text.Trim(),Username=user.Text,Password=password.Text,AutoStart=auto.Checked,Paths=paths};}
+  Input ReadInput(){var paths=apps.CheckedItems.Cast<ListViewItem>().SelectMany(x=>((Choice)x.Tag).Paths).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();if(paths.Length==0)throw new InvalidOperationException("请至少选择一个应用，每次需由你自己勾选。");if(String.IsNullOrWhiteSpace(address.Text))throw new InvalidOperationException("请填写代理地址或订阅链接。");return new Input{Kind=kind.Text,Address=address.Text.Trim(),Username=user.Text,Password=password.Text,AutoStart=auto.Checked,RuleMode=ruleMode.SelectedIndex==1?2:0,NodeName=nodeName.Text.Trim(),Paths=paths};}
   void UpdateCount(){if(count!=null){if(IsHandleCreated)BeginInvoke(new Action(()=>count.Text="已选 "+apps.CheckedItems.Count+" 个应用"));else count.Text="已选 "+apps.CheckedItems.Count+" 个应用";}}
   void AddChoice(Choice c){c.Paths=c.Paths.Where(File.Exists).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();if(c.Paths.Length==0||apps.Items.Cast<ListViewItem>().Any(i=>((Choice)i.Tag).Paths.SequenceEqual(c.Paths,StringComparer.OrdinalIgnoreCase)))return;var item=new ListViewItem(c.Name){Tag=c,Checked=false};item.SubItems.Add(String.Join("、",c.Paths.Select(Path.GetFileName)));apps.Items.Add(item);}
   void LoadRunningChoices(){
@@ -75,7 +79,7 @@ namespace ClashConfig {
    var phones=new List<string>();string packages=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),"WindowsApps");try{foreach(string pattern in new[]{"Microsoft.YourPhone_*_x64__*","MicrosoftWindows.CrossDevice_*_x64__*"})foreach(string dir in Directory.GetDirectories(packages,pattern))foreach(string f in Directory.GetFiles(dir,"*.exe"))if(Path.GetFileName(f)!="createdump.exe")phones.Add(f);}catch{}
    AddChoice(new Choice{Name="手机连接（含跨设备组件）",Paths=phones.ToArray()});
    if(phones.Count==0){using(var packagesKey=Registry.CurrentUser.OpenSubKey(@"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages")){if(packagesKey!=null)foreach(string key in packagesKey.GetSubKeyNames().Where(k=>k.StartsWith("Microsoft.YourPhone_")||k.StartsWith("MicrosoftWindows.CrossDevice_")))using(var sub=packagesKey.OpenSubKey(key)){string dir=sub.GetValue("PackageRootFolder") as string;if(dir!=null)foreach(string name in new[]{"PhoneExperienceHost.exe","YourPhoneAppProxy.exe","YourPhoneAppProxyHost.exe","CrossDeviceService.exe"}){string p=Path.Combine(dir,name);if(File.Exists(p))phones.Add(p);}}}AddChoice(new Choice{Name="手机连接（含跨设备组件）",Paths=phones.ToArray()});}
-   foreach(string name in new[]{"DingTalk","WXWork","WeChat","Weixin","QQ"}){var paths=new List<string>();foreach(var p in Process.GetProcessesByName(name)){try{paths.Add(p.MainModule.FileName);}catch{}finally{p.Dispose();}}AddChoice(new Choice{Name=name=="WXWork"?"企业微信":name=="DingTalk"?"钉钉":name,Paths=paths.ToArray()});}
+   foreach(string name in new[]{"douyin","DingTalk","WXWork","WeChat","Weixin","QQ"}){var paths=new List<string>();foreach(var p in Process.GetProcessesByName(name)){try{paths.Add(p.MainModule.FileName);}catch{}finally{p.Dispose();}}AddChoice(new Choice{Name=name=="WXWork"?"企业微信":name=="DingTalk"?"钉钉":name,Paths=paths.ToArray()});}
   }
  }
  public static class Program {

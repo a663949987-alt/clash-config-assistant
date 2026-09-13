@@ -1,4 +1,6 @@
-# Clash 应用代理配置助手 1.1.1
+# Clash 应用代理配置助手 1.1.2
+
+界面按内容高度自动排版，支持 Windows DPI 缩放；小窗口通过垂直滚动查看完整内容，避免文字、按钮和恢复链接被固定行高遮挡。
 
 Windows 10/11 x64 独立 EXE。需要已安装并启动初始化过的 Clash Verge Rev；本工具使用它的 Mihomo 内核，不内置 Clash 客户端。依赖 Windows .NET Framework 4.7 或更高版本。验证环境：Clash Verge Rev 2.5.2 / Mihomo v1.19.29。
 

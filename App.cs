@@ -12,12 +12,12 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 [assembly:AssemblyTitle("Clash 应用代理配置助手")]
-[assembly:AssemblyVersion("1.1.1.0")]
+[assembly:AssemblyVersion("1.1.2.0")]
 namespace ClashConfig {
  public sealed class MainForm:Form {
   ComboBox kind;TextBox address,user,password;CheckBox show,auto;ListView apps;Label count,status,client;Button apply,verify,restore,test;FlowLayoutPanel commandBar;bool busy;
   public MainForm(){
-   Text="Clash 应用代理配置助手";Font=new Font("Microsoft YaHei UI",10);AutoScaleMode=AutoScaleMode.Dpi;ClientSize=new Size(800,780);MinimumSize=new Size(760,740);StartPosition=FormStartPosition.CenterScreen;BackColor=Color.FromArgb(244,247,251);
+   Text="Clash 应用代理配置助手";Font=new Font("Microsoft YaHei UI",10);AutoScaleDimensions=new SizeF(96,96);AutoScaleMode=AutoScaleMode.Dpi;ClientSize=new Size(800,780);MinimumSize=new Size(760,600);StartPosition=FormStartPosition.CenterScreen;BackColor=Color.FromArgb(244,247,251);
    var root=new TableLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(18,12,18,12),ColumnCount=1,RowCount=7};root.RowStyles.Add(new RowStyle(SizeType.Absolute,44));root.RowStyles.Add(new RowStyle(SizeType.Absolute,36));root.RowStyles.Add(new RowStyle(SizeType.Absolute,162));root.RowStyles.Add(new RowStyle(SizeType.Percent,100));root.RowStyles.Add(new RowStyle(SizeType.Absolute,76));root.RowStyles.Add(new RowStyle(SizeType.Absolute,50));root.RowStyles.Add(new RowStyle(SizeType.Absolute,70));Controls.Add(root);
    var title=new Label{Text="选择应用，专用代理",Font=new Font(Font.FontFamily,21,FontStyle.Bold),AutoSize=true,Dock=DockStyle.Fill,ForeColor=Color.FromArgb(25,43,67)};root.Controls.Add(title,0,0);
    var clientRow=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2};clientRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));clientRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,150));client=new Label{Text=Core.ClashExe==null?"尚未发现 Clash Verge Rev":"已发现 Clash Verge Rev · 严格模式",AutoSize=true,Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleLeft};var locate=new Button{Text="选择 Clash 客户端",Dock=DockStyle.Fill,FlatStyle=FlatStyle.Flat};locate.Click+=delegate{using(var dlg=new OpenFileDialog{Title="选择 clash-verge.exe",Filter="Clash Verge|clash-verge.exe"})if(dlg.ShowDialog(this)==DialogResult.OK){using(var k=Registry.CurrentUser.CreateSubKey("Software\\ClashConfigAssistant"))k.SetValue("ClashPath",dlg.FileName);client.Text="已选择 Clash Verge Rev";}};clientRow.Controls.Add(client,0,0);clientRow.Controls.Add(locate,1,0);root.Controls.Add(clientRow,0,1);
@@ -44,7 +44,18 @@ namespace ClashConfig {
    useApps.Click+=delegate{try{var saved=LocalMemory.Load();if(saved==null){Log("尚无本机记忆。");return;}foreach(ListViewItem item in apps.Items)item.Checked=false;foreach(string p in saved.Paths??new string[0])AddChoice(new Choice{Name=Path.GetFileNameWithoutExtension(p),Paths=new[]{p}});foreach(ListViewItem item in apps.Items)item.Checked=((Choice)item.Tag).Paths.All(p=>(saved.Paths??new string[0]).Contains(p,StringComparer.OrdinalIgnoreCase));Log("已恢复仍存在的应用路径。软件更新后，请补充新增的联网组件，再点击应用。");}catch{Log("无法读取本机记忆，请重新填写或清除记忆。");}};
    clearMemory.Click+=delegate{try{LocalMemory.Clear();address.Clear();user.Clear();password.Clear();foreach(ListViewItem item in apps.Items)item.Checked=false;Log("已清除本机表单记忆。已生效的 Clash 配置与保护规则不受影响。");}catch{Log("清除记忆失败，请检查文件权限。");}};
    try{var saved=LocalMemory.Load();if(saved!=null){if(kind.Items.Contains(saved.Kind))kind.SelectedItem=saved.Kind;address.Text=saved.Address??"";user.Text=saved.Username??"";password.Text=saved.Password??"";auto.Checked=saved.AutoStart;status.Text="已读取本机加密记忆。应用仍未勾选；可手动选择或恢复上次选择。";}}catch{status.Text="本机记忆无法解密，未加载。可重新填写或清除记忆。";}
+   // Content determines row height; a small viewport scrolls instead of clipping text.
+   AutoScroll=true;root.Dock=DockStyle.Top;root.AutoSize=true;root.AutoSizeMode=AutoSizeMode.GrowAndShrink;root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+   root.RowStyles.Clear();for(int i=0;i<root.RowCount;i++)root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+   foreach(var table in new[]{clientRow,fields,safety}){table.AutoSize=true;table.AutoSizeMode=AutoSizeMode.GrowAndShrink;table.Dock=DockStyle.Top;table.RowStyles.Clear();for(int i=0;i<table.RowCount;i++)table.RowStyles.Add(new RowStyle(SizeType.AutoSize));}
+   proxy.AutoSize=true;proxy.AutoSizeMode=AutoSizeMode.GrowAndShrink;proxy.Dock=DockStyle.Top;
+   programs.Height=240;programs.Dock=DockStyle.Top;listLayout.RowStyles[1]=new RowStyle(SizeType.AutoSize);
+   foreach(var flow in new[]{addRow,memoryBar,commandBar}){flow.AutoSize=true;flow.AutoSizeMode=AutoSizeMode.GrowAndShrink;flow.WrapContents=true;flow.Dock=DockStyle.Top;}
+   FitButtons(root);status.AutoSize=true;status.MinimumSize=new Size(0,65);
+   root.SizeChanged+=delegate{int width=Math.Max(200,root.ClientSize.Width-root.Padding.Horizontal-12);status.MaximumSize=new Size(width,0);foreach(Control c in safety.Controls){var label=c as Label;if(label!=null)label.MaximumSize=new Size(width,0);}hint.MaximumSize=new Size(Math.Max(150,width-270),0);};
+   Shown+=delegate{root.PerformLayout();};
   }
+  static void FitButtons(Control parent){foreach(Control c in parent.Controls){var button=c as Button;if(button!=null){button.AutoSize=true;button.AutoSizeMode=AutoSizeMode.GrowOnly;button.MinimumSize=new Size(0,button.GetPreferredSize(Size.Empty).Height+4);}FitButtons(c);}}
   void SaveMemory(){LocalMemory.Save(new Input{Kind=kind.Text,Address=address.Text.Trim(),Username=user.Text,Password=password.Text,AutoStart=auto.Checked,Paths=apps.CheckedItems.Cast<ListViewItem>().SelectMany(x=>((Choice)x.Tag).Paths).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()});}
   Label Label(string t){return new Label{Text=t,Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleLeft,AutoSize=true};}
   Button Button(string t,int w,bool primary){return new Button{Text=t,Width=w,Height=42,FlatStyle=FlatStyle.Flat,BackColor=primary?Color.FromArgb(35,101,211):Color.White,ForeColor=primary?Color.White:Color.FromArgb(40,55,75)};}
